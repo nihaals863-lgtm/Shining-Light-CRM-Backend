@@ -1,0 +1,207 @@
+const Student = require('../models/Student');
+const Document = require('../models/Document');
+
+// @desc    Get all students
+// @route   GET /api/students
+// @access  Private (Admin: all, Staff: assigned only)
+const getStudents = async (req, res) => {
+    try {
+        let students;
+        if (req.user.role === 'admin') {
+            students = await Student.find().populate('assignedStaff', 'name email');
+        } else {
+            // Staff sees only their assigned students
+            students = await Student.find({ assignedStaff: req.user._id }).populate('assignedStaff', 'name email');
+        }
+
+        // Map to match frontend expectations
+        const formattedStudents = students.map(student => ({
+            id: student.studentId,
+            _id: student._id,
+            name: student.name,
+            points: student.points,
+            status: student.status,
+            phone: student.phone,
+            email: student.email,
+            assignedStaff: student.assignedStaff ? {
+                _id: student.assignedStaff._id,
+                name: student.assignedStaff.name
+            } : null
+        }));
+
+        res.status(200).json(formattedStudents);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Create student
+// @route   POST /api/students
+// @access  Private/Admin
+const createStudent = async (req, res) => {
+    const { name, phone, email, assignedStaff, status, points } = req.body;
+
+    if (!name || !phone || !email || !assignedStaff) {
+        return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+    }
+
+    try {
+        // Check if student with email already exists
+        const emailExists = await Student.findOne({ email });
+        if (emailExists) {
+            return res.status(400).json({ success: false, message: 'Student with this email already exists' });
+        }
+
+        const student = await Student.create({
+            name,
+            phone,
+            email,
+            assignedStaff,
+            ...(points !== undefined && { points }),
+            ...(status && { status }),
+        });
+
+        res.status(201).json({
+            success: true,
+            data: student
+        });
+    } catch (error) {
+        console.error(error);
+        if (error.code === 11000) {
+            return res.status(400).json({ success: false, message: 'Student ID or Email already exists' });
+        }
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Get student profile
+// @route   GET /api/students/:id
+// @access  Private
+const getStudentById = async (req, res) => {
+    try {
+        const student = await Student.findById(req.params.id).populate('assignedStaff', 'name email');
+
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student not found' });
+        }
+
+        // Check if staff is authorized to view this student
+        if (req.user.role !== 'admin' && student.assignedStaff._id.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to access this student' });
+        }
+
+        // Fetch documents from the global Document collection for this student
+        const globalDocs = await Document.find({ studentId: req.params.id });
+
+        // Format global documents to match the profile expectations
+        const formattedGlobalDocs = globalDocs.map(d => ({
+            _id: d._id,
+            name: d.documentType, // Use documentType as the name
+            url: d.fileUrl,
+            status: d.status,
+            uploadDate: new Date(d.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            size: d.size || 'N/A'
+        }));
+
+        // Merge with embedded documents
+        const allDocuments = [...formattedGlobalDocs, ...student.documents];
+
+        res.status(200).json({
+            id: student.studentId,
+            _id: student._id,
+            name: student.name,
+            phone: student.phone,
+            email: student.email,
+            points: student.points,
+            status: student.status,
+            assignedStaff: student.assignedStaff ? {
+                _id: student.assignedStaff._id,
+                name: student.assignedStaff.name
+            } : null,
+            progress: `${student.points} / 250`,
+            notes: student.notes,
+            attendance: student.attendance,
+            documents: allDocuments
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Update student
+// @route   PUT /api/students/:id
+// @access  Private/Admin
+const updateStudent = async (req, res) => {
+    try {
+        let student = await Student.findById(req.params.id);
+
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student not found' });
+        }
+
+        // Authorization Check: Staff can only update their assigned students
+        if (req.user.role !== 'admin' && student.assignedStaff.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this student' });
+        }
+
+        // Only update allowed fields
+        const { name, phone, email, assignedStaff, points, status } = req.body;
+
+        if (name) student.name = name;
+        if (phone) student.phone = phone;
+        if (email) student.email = email;
+
+        // Only admin can change assigned staff
+        if (assignedStaff && req.user.role === 'admin') {
+            student.assignedStaff = assignedStaff;
+        }
+
+        if (points !== undefined) student.points = points;
+        if (status) student.status = status; // Allow manual override (e.g., Dropped)
+
+        await student.save(); // using save to trigger pre-save hook for status updates
+
+        const updatedStudent = await Student.findById(req.params.id).populate('assignedStaff', 'name email');
+
+        res.status(200).json({
+            success: true,
+            data: updatedStudent
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+// @desc    Delete student
+// @route   DELETE /api/students/:id
+// @access  Private/Admin
+const deleteStudent = async (req, res) => {
+    try {
+        const student = await Student.findById(req.params.id);
+
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student not found' });
+        }
+
+        await student.deleteOne();
+
+        res.status(200).json({
+            success: true,
+            data: {}
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+module.exports = {
+    getStudents,
+    createStudent,
+    getStudentById,
+    updateStudent,
+    deleteStudent
+};
