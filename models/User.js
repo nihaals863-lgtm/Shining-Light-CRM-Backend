@@ -24,8 +24,15 @@ const userSchema = new mongoose.Schema(
         },
         role: {
             type: String,
-            enum: ['admin', 'staff'],
+            enum: ['super_admin', 'admin', 'staff'],
             default: 'staff',
+        },
+        organizationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Organization',
+            required: function() {
+                return this.role !== 'super_admin';
+            }
         },
         status: {
             type: String,

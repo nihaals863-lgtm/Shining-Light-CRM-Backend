@@ -24,6 +24,11 @@ const attendanceSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User', // Admin
             required: true,
+        },
+        organizationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Organization',
+            required: true,
         }
     },
     {

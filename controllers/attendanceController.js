@@ -18,7 +18,8 @@ const createAttendance = async (req, res) => {
         const existingRecord = await Attendance.findOne({
             studentId: studentMongoId,
             workshopId: workshopName,
-            date: attendanceDate
+            date: attendanceDate,
+            organizationId: req.user.organizationId
         });
 
         if (existingRecord) {
@@ -28,10 +29,15 @@ const createAttendance = async (req, res) => {
             });
         }
 
-        // 2. Get student
-        const student = await Student.findById(studentMongoId);
+        // 2. Get student scoped by organization and (if staff) assigned staff
+        const studentFilter = { _id: studentMongoId, organizationId: req.user.organizationId };
+        if (req.user.role === 'staff') {
+            studentFilter.assignedStaff = req.user._id;
+        }
+
+        const student = await Student.findOne(studentFilter);
         if (!student) {
-            return res.status(404).json({ success: false, message: 'Student not found' });
+            return res.status(403).json({ success: false, message: 'Not authorized to record attendance for this student' });
         }
 
         // 3. Create record
@@ -41,7 +47,8 @@ const createAttendance = async (req, res) => {
             workshopId: workshopName,
             date: attendanceDate,
             pointsAwarded: points,
-            createdBy: req.user._id
+            createdBy: req.user._id,
+            organizationId: req.user.organizationId
         });
 
         // 4. Assign +1 point and save student
@@ -72,9 +79,12 @@ const createAttendance = async (req, res) => {
 // @access  Private
 const getAllAttendance = async (req, res) => {
     try {
-        let filter = {};
+        let filter = { organizationId: req.user.organizationId };
         if (req.user.role === 'staff') {
-            const students = await Student.find({ assignedStaff: req.user._id }).select('_id');
+            const students = await Student.find({ 
+                assignedStaff: req.user._id,
+                organizationId: req.user.organizationId 
+            }).select('_id');
             const studentIds = students.map(s => s._id);
             filter.studentId = { $in: studentIds };
         }
@@ -109,14 +119,20 @@ const getAllAttendance = async (req, res) => {
 // @access  Private/Admin
 const deleteAttendance = async (req, res) => {
     try {
-        const attendance = await Attendance.findById(req.params.id);
+        const attendance = await Attendance.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         if (!attendance) {
             return res.status(404).json({ success: false, message: 'Attendance record not found' });
         }
 
-        // 1. Decrease points from student
-        const student = await Student.findById(attendance.studentId);
+        // 1. Decrease points from student scoped by organization
+        const student = await Student.findOne({ 
+            _id: attendance.studentId, 
+            organizationId: req.user.organizationId 
+        });
 
         if (student) {
             student.points = Math.max(0, student.points - attendance.pointsAwarded); // Prevent negative

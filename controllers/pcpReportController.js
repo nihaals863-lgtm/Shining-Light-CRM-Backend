@@ -23,6 +23,18 @@ const createReport = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Student, date of service, and staff signature are required.' });
         }
 
+        // Organization and Role Check: Ensure student belongs to org and (if staff) is assigned
+        const Student = require('../models/Student');
+        const studentFilter = { _id: studentId, organizationId: req.user.organizationId };
+        if (req.user.role === 'staff') {
+            studentFilter.assignedStaff = req.user._id;
+        }
+
+        const student = await Student.findOne(studentFilter);
+        if (!student) {
+            return res.status(403).json({ success: false, message: 'Not authorized to create report for this student' });
+        }
+
         let assessmentFile = undefined;
         if (req.file) {
             try {
@@ -71,22 +83,40 @@ const createReport = async (req, res) => {
 // @access  Private
 const getReports = async (req, res) => {
     try {
+        const Student = require('../models/Student');
+        
+        // Base filter: All students in the user's organization
+        // (SuperAdmins are excluded from this specific logic as they have their own dashboard/stats)
+        const orgStudents = await Student.find({ organizationId: req.user.organizationId }).select('_id');
+        const orgStudentIds = orgStudents.map(s => s._id.toString());
+
         const filter = {};
-        if (req.query.studentId) filter.studentId = req.query.studentId;
 
-        // Staff filter
         if (req.user.role === 'staff') {
-            const Student = require('../models/Student');
-            const students = await Student.find({ assignedStaff: req.user._id }).select('_id');
-            const studentIds = students.map(s => s._id);
-
-            if (filter.studentId) {
-                // If a specific student is requested, ensure it's one of their assigned students
-                if (!studentIds.some(id => id.toString() === filter.studentId.toString())) {
+            // Staff: only students assigned to them within their organization
+            const assignedStudents = await Student.find({ 
+                assignedStaff: req.user._id,
+                organizationId: req.user.organizationId 
+            }).select('_id');
+            const assignedStudentIds = assignedStudents.map(s => s._id.toString());
+            
+            if (req.query.studentId) {
+                if (!assignedStudentIds.includes(req.query.studentId.toString())) {
                     return res.status(403).json({ success: false, message: 'Not authorized to view this student\'s reports' });
                 }
+                filter.studentId = req.query.studentId;
             } else {
-                filter.studentId = { $in: studentIds };
+                filter.studentId = { $in: assignedStudents.map(s => s._id) };
+            }
+        } else if (req.user.role === 'admin') {
+            // Admin: any student in their organization
+            if (req.query.studentId) {
+                if (!orgStudentIds.includes(req.query.studentId.toString())) {
+                    return res.status(403).json({ success: false, message: 'Not authorized to view this student\'s reports' });
+                }
+                filter.studentId = req.query.studentId;
+            } else {
+                filter.studentId = { $in: orgStudents.map(s => s._id) };
             }
         }
 
@@ -97,7 +127,7 @@ const getReports = async (req, res) => {
 
         res.status(200).json({ success: true, data: reports });
     } catch (error) {
-        console.error(error);
+        console.error('GET REPORTS ERROR:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
@@ -107,17 +137,23 @@ const getReports = async (req, res) => {
 // @access  Private
 const getReportById = async (req, res) => {
     try {
+        const Student = require('../models/Student');
         const report = await PCPReport.findById(req.params.id)
-            .populate('studentId', 'name studentId status points')
+            .populate('studentId', 'name studentId status points organizationId')
             .populate('createdBy', 'name role');
 
         if (!report) {
             return res.status(404).json({ success: false, message: 'Report not found' });
         }
 
+        // Organization Check
+        if (report.studentId?.organizationId?.toString() !== req.user.organizationId.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to access this report' });
+        }
+
         res.status(200).json({ success: true, data: report });
     } catch (error) {
-        console.error(error);
+        console.error('GET REPORT BY ID ERROR:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
@@ -127,8 +163,17 @@ const getReportById = async (req, res) => {
 // @access  Private (Admin + Staff)
 const updateReport = async (req, res) => {
     try {
-        let report = await PCPReport.findById(req.params.id);
+        let report = await PCPReport.findById(req.params.id).populate('studentId');
         if (!report) return res.status(404).json({ success: false, message: 'Report not found' });
+
+        // Organization and Ownership Check
+        if (report.studentId?.organizationId?.toString() !== req.user.organizationId.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this report' });
+        }
+
+        if (req.user.role === 'staff' && report.studentId?.assignedStaff?.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update reports for this student' });
+        }
 
         // Sanitizing input: only allow these fields to be updated via this route
         const allowedFields = [
@@ -181,8 +226,13 @@ const updateReport = async (req, res) => {
 // @access  Private (Admin only)
 const deleteReport = async (req, res) => {
     try {
-        const report = await PCPReport.findById(req.params.id);
+        const report = await PCPReport.findById(req.params.id).populate('studentId');
         if (!report) return res.status(404).json({ success: false, message: 'Report not found' });
+
+        // Organization Check
+        if (report.studentId?.organizationId?.toString() !== req.user.organizationId.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized to delete this report' });
+        }
 
         await report.deleteOne();
 

@@ -16,6 +16,12 @@ const settingSchema = new mongoose.Schema({
     maxFileSizeMB: {
         type: Number,
         default: 10
+    },
+    organizationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Organization',
+        required: true,
+        unique: true
     }
 }, {
     timestamps: true

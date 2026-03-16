@@ -1,6 +1,7 @@
 const Student = require('../models/Student');
 const Workshop = require('../models/Workshop');
 const User = require('../models/User');
+const Organization = require('../models/Organization');
 
 // @desc    Get dashboard statistics
 // @route   GET /api/dashboard/stats
@@ -8,10 +9,12 @@ const User = require('../models/User');
 const getDashboardStats = async (req, res) => {
     try {
         const isStaff = req.user.role === 'staff';
-        const filter = isStaff ? { assignedStaff: req.user._id } : {};
+        const filter = { organizationId: req.user.organizationId };
+        if (isStaff) filter.assignedStaff = req.user._id;
 
         const students = await Student.find(filter).sort({ createdAt: -1 });
-        const totalWorkshops = await Workshop.countDocuments();
+        const totalWorkshops = await Workshop.countDocuments({ organizationId: req.user.organizationId });
+        const organization = await Organization.findById(req.user.organizationId).select('expireDate status');
 
         const totalStudents = students.length;
         let activeStudents = 0;
@@ -114,7 +117,11 @@ const getDashboardStats = async (req, res) => {
                 recentStudents,
                 recentActivities: topRecentActivities,
                 completionData,
-                progressData
+                progressData,
+                expiration: organization ? {
+                    expireDate: organization.expireDate,
+                    status: organization.status
+                } : null
             }
         });
     } catch (error) {

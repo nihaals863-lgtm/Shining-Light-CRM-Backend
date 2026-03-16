@@ -2,6 +2,8 @@ const Document = require('../models/Document');
 const Student = require('../models/Student');
 const Setting = require('../models/Setting');
 const imagekit = require('../config/imagekit');
+const https = require('https');
+const http = require('http');
 
 // Helper to evaluate completion rules based on CRM specs
 const evaluateStudentCompletion = async (studentId) => {
@@ -9,17 +11,18 @@ const evaluateStudentCompletion = async (studentId) => {
         const student = await Student.findById(studentId);
         if (!student) return;
 
-        // Fetch current system settings
-        let settings = await Setting.findOne();
+        // Fetch current system settings scoped by organization
+        let settings = await Setting.findOne({ organizationId: student.organizationId });
         if (!settings) {
-            settings = await Setting.create({});
+            settings = await Setting.create({ organizationId: student.organizationId });
         }
         const threshold = settings.completionPointsThreshold;
 
-        // Check if housing document exists
+        // Check if housing document exists scoped by organization
         const hasAnyHousingDoc = await Document.exists({
             studentId,
-            documentType: 'Housing Verification'
+            documentType: 'Housing Verification',
+            organizationId: student.organizationId
         });
 
         if (hasAnyHousingDoc) {
@@ -66,7 +69,8 @@ const uploadDocument = async (req, res) => {
             documentType,
             status: status || 'pending',
             fileUrl: fileUrl,
-            uploadedBy: req.user._id
+            uploadedBy: req.user._id,
+            organizationId: req.user.organizationId
         });
 
         // Trigger business background task automatically
@@ -84,12 +88,15 @@ const uploadDocument = async (req, res) => {
 // @access  Private
 const getDocuments = async (req, res) => {
     try {
-        const filter = {};
+        const filter = { organizationId: req.user.organizationId };
         if (req.query.studentId) filter.studentId = req.query.studentId;
 
         // Staff filter
         if (req.user.role === 'staff') {
-            const students = await Student.find({ assignedStaff: req.user._id }).select('_id');
+            const students = await Student.find({
+                assignedStaff: req.user._id,
+                organizationId: req.user.organizationId
+            }).select('_id');
             const studentIds = students.map(s => s._id);
 
             if (filter.studentId) {
@@ -123,8 +130,12 @@ const deleteDocument = async (req, res) => {
         }
 
         // Staff check: Can only delete if student is assigned to them
+        // Staff check: Can only delete if student is assigned to them within their organization
         if (req.user.role === 'staff') {
-            const student = await Student.findById(document.studentId);
+            const student = await Student.findOne({
+                _id: document.studentId,
+                organizationId: req.user.organizationId
+            });
             if (!student || student.assignedStaff?.toString() !== req.user._id.toString()) {
                 return res.status(403).json({ success: false, message: 'Not authorized to delete this student\'s documents' });
             }
@@ -145,7 +156,10 @@ const deleteDocument = async (req, res) => {
 // @access  Private/Admin
 const updateDocument = async (req, res) => {
     try {
-        const document = await Document.findById(req.params.id);
+        const document = await Document.findOne({
+            _id: req.params.id,
+            organizationId: req.user.organizationId
+        });
         if (!document) {
             return res.status(404).json({ success: false, message: 'Document not found' });
         }
@@ -191,45 +205,50 @@ const updateDocument = async (req, res) => {
 
 const downloadDocument = async (req, res) => {
     try {
-        const document = await Document.findById(req.params.id);
+        const document = await Document.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
         if (!document) return res.status(404).json({ success: false, message: 'Document not found' });
 
-        // Clean filename and set headers to force download with PDF format
+        // Clean filename
         let cleanFileName = (document.documentType || 'document').replace(/\"/g, '');
-        // Add .pdf extension if not present
         if (!cleanFileName.toLowerCase().endsWith('.pdf')) {
             cleanFileName = `${cleanFileName}.pdf`;
         }
 
         res.setHeader('Content-Disposition', `attachment; filename="${cleanFileName}"`);
-        res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
 
-        // Proxy the file from Cloudinary to the client
-        const protocol = document.fileUrl.startsWith('https') ? https : http;
-        const request = protocol.get(document.fileUrl, (fileStream) => {
-            fileStream.on('error', (err) => {
-                console.error('Stream read error:', err);
-                if (!res.writableEnded) {
-                    res.end();
+        // Function to stream with redirect following
+        const streamWithRedirects = (url) => {
+            const protocol = url.startsWith('https') ? https : http;
+            protocol.get(url, (fileStream) => {
+                // Handle redirects
+                if (fileStream.statusCode >= 300 && fileStream.statusCode < 400 && fileStream.headers.location) {
+                    return streamWithRedirects(fileStream.headers.location);
                 }
+
+                if (fileStream.statusCode !== 200) {
+                    return res.status(fileStream.statusCode || 500).end();
+                }
+
+                // Forward content type if available
+                const contentType = fileStream.headers['content-type'];
+                if (contentType) {
+                    res.setHeader('Content-Type', contentType);
+                } else {
+                    res.setHeader('Content-Type', 'application/octet-stream');
+                }
+
+                fileStream.pipe(res);
+            }).on('error', (err) => {
+                console.error('Request error:', err);
+                if (!res.writableEnded) res.status(500).end();
             });
+        };
 
-            fileStream.pipe(res);
-        });
-
-        request.on('error', (err) => {
-            console.error('Request error:', err);
-            if (!res.writableEnded) {
-                res.status(500).end();
-            }
-        });
-
-        res.on('error', (err) => {
-            console.error('Response error:', err);
-        });
+        streamWithRedirects(document.fileUrl);
     } catch (error) {
         console.error('Download error:', error);
         if (!res.writableEnded) {

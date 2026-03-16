@@ -76,7 +76,8 @@ const addAttendance = async (req, res) => {
                 workshopId: workshopName,
                 date: new Date(), // Approximate current date for backend
                 pointsAwarded: Number(pointsEarned),
-                createdBy: req.user._id
+                createdBy: req.user._id,
+                organizationId: req.user.organizationId
             });
         } catch (syncErr) {
             console.log("Global sync attendance duplicate or error ignored:", syncErr.message);
@@ -153,15 +154,7 @@ const uploadDocument = async (req, res) => {
             sizeStr = 'Unknown Size';
         }
 
-        const newDoc = {
-            name: req.file.originalname,
-            url: req.file.path, // Cloudinary URL
-            publicId: req.file.filename, // Cloudinary public_id
-            size: sizeStr,
-            uploadDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-        };
-
-        // Also create in global Document collection for central admin access
+        // Create in global Document collection for central admin access
         await Document.create({
             studentId: student._id,
             documentType: req.file.originalname, // Default to filename for now
@@ -169,13 +162,30 @@ const uploadDocument = async (req, res) => {
             publicId: req.file.filename,
             size: sizeStr,
             status: 'approved', // Profile uploads are usually pre-approved or direct
-            uploadedBy: req.user._id
+            uploadedBy: req.user._id,
+            organizationId: req.user.organizationId
         });
 
-        student.documents.unshift(newDoc);
-        await student.save();
+        // Fetch documents from the global Document collection for this student scoped by organization
+        const globalDocs = await Document.find({ 
+            studentId: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
-        res.status(201).json({ success: true, data: student.documents });
+        // Format global documents to match the profile expectations
+        const formattedGlobalDocs = globalDocs.map(d => ({
+            _id: d._id,
+            name: d.documentType,
+            url: d.fileUrl,
+            status: d.status,
+            uploadDate: d.createdAt ? new Date(d.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            size: d.size || 'N/A'
+        }));
+
+        // Merge with existing embedded documents
+        const allDocuments = [...formattedGlobalDocs, ...student.documents];
+
+        res.status(201).json({ success: true, data: allDocuments });
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: 'Server Error' });
@@ -258,60 +268,53 @@ const deleteDocument = async (req, res) => {
 // @access  Private
 const downloadDocument = async (req, res) => {
     try {
-        const student = await Student.findById(req.params.id);
+        const student = await Student.findOne({
+            _id: req.params.id,
+            organizationId: req.user.organizationId
+        });
         if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
-        const { docId } = req.params;
-        let doc = student.documents.find(d => d._id.toString() === docId);
+        const document = student.documents.id(req.params.docId);
+        if (!document) return res.status(404).json({ success: false, message: 'Document not found' });
 
-        if (!doc) {
-            const globalDoc = await Document.findById(docId);
-            if (globalDoc) {
-                doc = {
-                    name: globalDoc.documentType,
-                    url: globalDoc.fileUrl
-                };
-            }
-        }
-
-        if (!doc) return res.status(404).json({ success: false, message: 'Document not found' });
-
-        // Set headers to force download with PDF format
-        let cleanFileName = doc.name.replace(/\"/g, '');
-        // Add .pdf extension if not present
+        // Clean filename
+        let cleanFileName = (document.name || 'document').replace(/\"/g, '');
         if (!cleanFileName.toLowerCase().endsWith('.pdf')) {
             cleanFileName = `${cleanFileName}.pdf`;
         }
 
         res.setHeader('Content-Disposition', `attachment; filename="${cleanFileName}"`);
-        res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
 
-        // Pipe the file from Cloudinary through our server to the client
-        const protocol = doc.url.startsWith('https') ? https : http;
-        const request = protocol.get(doc.url, (fileStream) => {
-            fileStream.on('error', (err) => {
-                console.error('Stream read error:', err);
-                if (!res.writableEnded) {
-                    res.end();
+        // Function to stream with redirect following
+        const streamWithRedirects = (url) => {
+            const protocol = url.startsWith('https') ? https : http;
+            protocol.get(url, (fileStream) => {
+                // Handle redirects
+                if (fileStream.statusCode >= 300 && fileStream.statusCode < 400 && fileStream.headers.location) {
+                    return streamWithRedirects(fileStream.headers.location);
                 }
+
+                if (fileStream.statusCode !== 200) {
+                    return res.status(fileStream.statusCode || 500).end();
+                }
+
+                // Forward content type if available
+                const contentType = fileStream.headers['content-type'];
+                if (contentType) {
+                    res.setHeader('Content-Type', contentType);
+                } else {
+                    res.setHeader('Content-Type', 'application/octet-stream');
+                }
+
+                fileStream.pipe(res);
+            }).on('error', (err) => {
+                console.error('Request error:', err);
+                if (!res.writableEnded) res.status(500).end();
             });
+        };
 
-            fileStream.pipe(res);
-        });
-
-        request.on('error', (err) => {
-            console.error('Request error:', err);
-            if (!res.writableEnded) {
-                res.status(500).end();
-            }
-        });
-
-        res.on('error', (err) => {
-            console.error('Response error:', err);
-        });
+        streamWithRedirects(document.url);
     } catch (error) {
         console.error('Download error:', error);
         if (!res.writableEnded) {

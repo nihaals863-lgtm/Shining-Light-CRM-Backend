@@ -30,6 +30,11 @@ const documentSchema = new mongoose.Schema(
         },
         size: {
             type: String, // Formatted size string
+        },
+        organizationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Organization',
+            required: true,
         }
     },
     {

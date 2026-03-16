@@ -6,7 +6,7 @@ const Attendance = require('../models/Attendance');
 // @access  Private
 const getWorkshops = async (req, res) => {
     try {
-        const workshops = await Workshop.find().sort({ createdAt: -1 });
+        const workshops = await Workshop.find({ organizationId: req.user.organizationId }).sort({ createdAt: -1 });
 
         // Map to return expected format: id, name, pointsReward, createdAt
         const formattedWorkshops = workshops.map(w => ({
@@ -30,7 +30,7 @@ const getWorkshops = async (req, res) => {
 // @access  Private
 const getWorkshopById = async (req, res) => {
     try {
-        const workshop = await Workshop.findById(req.params.id);
+        const workshop = await Workshop.findOne({ _id: req.params.id, organizationId: req.user.organizationId });
 
         if (!workshop) {
             return res.status(404).json({ success: false, message: 'Workshop not found' });
@@ -66,7 +66,8 @@ const createWorkshop = async (req, res) => {
             name,
             description,
             pointsReward: pointsReward || 1,
-            createdBy: req.user._id
+            createdBy: req.user._id,
+            organizationId: req.user.organizationId
         });
 
         res.status(201).json({
@@ -94,7 +95,10 @@ const updateWorkshop = async (req, res) => {
     try {
         const { name, description, pointsReward } = req.body;
 
-        let workshop = await Workshop.findById(req.params.id);
+        let workshop = await Workshop.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
         if (!workshop) return res.status(404).json({ success: false, message: 'Workshop not found' });
 
         // Build object with only allowed fields
@@ -131,13 +135,17 @@ const updateWorkshop = async (req, res) => {
 // @access  Private/Admin
 const deleteWorkshop = async (req, res) => {
     try {
-        const workshop = await Workshop.findById(req.params.id);
+        const workshop = await Workshop.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
         if (!workshop) return res.status(404).json({ success: false, message: 'Workshop not found' });
 
-        // Rule: prevent deletion if attendance exists
-        // Frontend sends workshopName to attendance so we search by workshop name or ID.
-        // In attendanceController we used workshopName in workshopId field. Let's check against name.
-        const attendanceExists = await Attendance.findOne({ workshopId: workshop.name });
+        // Rule: prevent deletion if attendance exists within organization
+        const attendanceExists = await Attendance.findOne({ 
+            workshopId: workshop.name,
+            organizationId: req.user.organizationId
+        });
 
         if (attendanceExists) {
             return res.status(400).json({

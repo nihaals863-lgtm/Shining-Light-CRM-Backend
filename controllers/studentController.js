@@ -1,5 +1,7 @@
 const Student = require('../models/Student');
 const Document = require('../models/Document');
+const Organization = require('../models/Organization');
+const SubscriptionPlan = require('../models/SubscriptionPlan');
 
 // @desc    Get all students
 // @route   GET /api/students
@@ -8,10 +10,13 @@ const getStudents = async (req, res) => {
     try {
         let students;
         if (req.user.role === 'admin') {
-            students = await Student.find().populate('assignedStaff', 'name email');
+            students = await Student.find({ organizationId: req.user.organizationId }).populate('assignedStaff', 'name email');
         } else {
-            // Staff sees only their assigned students
-            students = await Student.find({ assignedStaff: req.user._id }).populate('assignedStaff', 'name email');
+            // Staff sees only their assigned students within their organization
+            students = await Student.find({ 
+                organizationId: req.user.organizationId,
+                assignedStaff: req.user._id 
+            }).populate('assignedStaff', 'name email');
         }
 
         // Map to match frontend expectations
@@ -47,10 +52,31 @@ const createStudent = async (req, res) => {
     }
 
     try {
-        // Check if student with email already exists
-        const emailExists = await Student.findOne({ email });
+        // Check if student with email already exists within the organization
+        const emailExists = await Student.findOne({ 
+            email, 
+            organizationId: req.user.organizationId 
+        });
+
         if (emailExists) {
-            return res.status(400).json({ success: false, message: 'Student with this email already exists' });
+            return res.status(400).json({ success: false, message: 'Student with this email already exists in your organization' });
+        }
+
+        // Check plan limits
+        const organization = await Organization.findById(req.user.organizationId).populate('planId');
+        if (!organization || !organization.planId) {
+            return res.status(400).json({ success: false, message: 'Organization plan not found' });
+        }
+
+        const studentCount = await Student.countDocuments({
+            organizationId: req.user.organizationId
+        });
+
+        if (studentCount >= organization.planId.maxStudents) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `You have reached the maximum student limit (${organization.planId.maxStudents}) for your plan. Please upgrade to add more students.` 
+            });
         }
 
         const student = await Student.create({
@@ -58,6 +84,7 @@ const createStudent = async (req, res) => {
             phone,
             email,
             assignedStaff,
+            organizationId: req.user.organizationId,
             ...(points !== undefined && { points }),
             ...(status && { status }),
         });
@@ -80,7 +107,10 @@ const createStudent = async (req, res) => {
 // @access  Private
 const getStudentById = async (req, res) => {
     try {
-        const student = await Student.findById(req.params.id).populate('assignedStaff', 'name email');
+        const student = await Student.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        }).populate('assignedStaff', 'name email');
 
         if (!student) {
             return res.status(404).json({ success: false, message: 'Student not found' });
@@ -91,8 +121,11 @@ const getStudentById = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized to access this student' });
         }
 
-        // Fetch documents from the global Document collection for this student
-        const globalDocs = await Document.find({ studentId: req.params.id });
+        // Fetch documents from the global Document collection for this student scoped by organization
+        const globalDocs = await Document.find({ 
+            studentId: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         // Format global documents to match the profile expectations
         const formattedGlobalDocs = globalDocs.map(d => ({
@@ -135,7 +168,10 @@ const getStudentById = async (req, res) => {
 // @access  Private/Admin
 const updateStudent = async (req, res) => {
     try {
-        let student = await Student.findById(req.params.id);
+        let student = await Student.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         if (!student) {
             return res.status(404).json({ success: false, message: 'Student not found' });
@@ -180,7 +216,10 @@ const updateStudent = async (req, res) => {
 // @access  Private/Admin
 const deleteStudent = async (req, res) => {
     try {
-        const student = await Student.findById(req.params.id);
+        const student = await Student.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         if (!student) {
             return res.status(404).json({ success: false, message: 'Student not found' });

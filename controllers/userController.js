@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Organization = require('../models/Organization');
 const imagekit = require('../config/imagekit');
 
 // @desc    Get all staff
@@ -6,7 +7,10 @@ const imagekit = require('../config/imagekit');
 // @access  Private
 const getStaff = async (req, res) => {
     try {
-        const staff = await User.find({ role: 'staff' }).select('-password');
+        const staff = await User.find({ 
+            role: 'staff',
+            organizationId: req.user.organizationId 
+        }).select('-password');
         res.status(200).json({ success: true, data: staff });
     } catch (error) {
         console.error(error);
@@ -58,6 +62,18 @@ const updateProfile = async (req, res) => {
 
             const updatedUser = await user.save();
 
+            // If admin, update organization logo
+            let organizationLogo = '';
+            if (updatedUser.role === 'admin' && updatedUser.organizationId) {
+                await Organization.findByIdAndUpdate(updatedUser.organizationId, {
+                    logo: updatedUser.avatar
+                });
+                organizationLogo = updatedUser.avatar;
+            } else if (updatedUser.organizationId) {
+                const org = await Organization.findById(updatedUser.organizationId);
+                organizationLogo = org ? org.logo : '';
+            }
+
             res.status(200).json({
                 success: true,
                 data: {
@@ -65,7 +81,8 @@ const updateProfile = async (req, res) => {
                     name: updatedUser.name,
                     email: updatedUser.email,
                     role: updatedUser.role,
-                    avatar: updatedUser.avatar
+                    avatar: updatedUser.avatar,
+                    organizationLogo: organizationLogo
                 }
             });
         } else {

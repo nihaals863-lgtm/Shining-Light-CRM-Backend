@@ -1,11 +1,24 @@
 const User = require('../models/User');
+const Organization = require('../models/Organization');
+const SubscriptionPlan = require('../models/SubscriptionPlan');
 
 // @desc    Get all staff
 // @route   GET /api/staff
 // @access  Private/Admin
 const getAllStaff = async (req, res) => {
     try {
-        const staff = await User.find({ role: { $in: ['staff', 'admin'] } }).select('-password');
+        const fetchFilter = { 
+            organizationId: req.user.organizationId 
+        };
+
+        // If requester is admin, only show staff
+        if (req.user.role === 'admin') {
+            fetchFilter.role = 'staff';
+        } else {
+            fetchFilter.role = { $in: ['staff', 'admin'] };
+        }
+
+        const staff = await User.find(fetchFilter).select('-password');
         res.status(200).json({
             success: true,
             count: staff.length,
@@ -21,13 +34,39 @@ const getAllStaff = async (req, res) => {
 // @route   POST /api/staff
 // @access  Private/Admin
 const createStaff = async (req, res) => {
-    const { name, email, password, role } = req.body;
+    let { name, email, password, role } = req.body;
+
+    // Security: Admin can only create 'staff'
+    if (req.user.role === 'admin') {
+        role = 'staff';
+    }
 
     try {
-        let user = await User.findOne({ email });
+        let user = await User.findOne({ 
+            email, 
+            organizationId: req.user.organizationId 
+        });
 
         if (user) {
-            return res.status(400).json({ success: false, message: 'User already exists' });
+            return res.status(400).json({ success: false, message: 'User already exists in your organization' });
+        }
+
+        // Check plan limits
+        const organization = await Organization.findById(req.user.organizationId).populate('planId');
+        if (!organization || !organization.planId) {
+            return res.status(400).json({ success: false, message: 'Organization plan not found' });
+        }
+
+        const staffCount = await User.countDocuments({
+            organizationId: req.user.organizationId,
+            role: { $in: ['staff', 'admin'] }
+        });
+
+        if (staffCount >= organization.planId.maxStaff) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `You have reached the maximum staff limit (${organization.planId.maxStaff}) for your plan. Please upgrade to add more staff.` 
+            });
         }
 
         user = await User.create({
@@ -35,7 +74,8 @@ const createStaff = async (req, res) => {
             email,
             password,
             role: role || 'staff',
-            status: req.body.status || 'Active'
+            status: req.body.status || 'Active',
+            organizationId: req.user.organizationId
         });
 
         res.status(201).json({
@@ -59,7 +99,10 @@ const createStaff = async (req, res) => {
 // @access  Private/Admin
 const updateStaff = async (req, res) => {
     try {
-        let user = await User.findById(req.params.id);
+        let user = await User.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'Staff member not found' });
@@ -68,7 +111,15 @@ const updateStaff = async (req, res) => {
         // Update fields if they exist in request body
         if (req.body.name) user.name = req.body.name;
         if (req.body.email) user.email = req.body.email;
-        if (req.body.role) user.role = req.body.role;
+        
+        // Security: Only SuperAdmin can promote/demote admins
+        if (req.body.role && req.user.role !== 'admin') {
+            user.role = req.body.role;
+        } else if (req.body.role === 'admin' && req.user.role === 'admin') {
+            // Silently ignore or block role escalation to admin by an admin
+            // We keep the existing role
+        }
+
         if (req.body.status) user.status = req.body.status;
         if (req.body.password) user.password = req.body.password;
 
@@ -91,7 +142,10 @@ const updateStaff = async (req, res) => {
 // @access  Private/Admin
 const deleteStaff = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findOne({ 
+            _id: req.params.id, 
+            organizationId: req.user.organizationId 
+        });
 
         if (!user) {
             return res.status(404).json({ success: false, message: 'Staff member not found' });

@@ -77,7 +77,12 @@ const studentSchema = new mongoose.Schema(
                 status: { type: String, enum: ['Draft', 'Completed'], default: 'Completed' },
                 createdAt: { type: Date, default: Date.now }
             }
-        ]
+        ],
+        organizationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Organization',
+            required: true,
+        }
     },
     {
         timestamps: true,

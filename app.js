@@ -8,6 +8,7 @@ const staffRoutes = require('./routes/staffRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const workshopRoutes = require('./routes/workshopRoutes');
 const settingRoutes = require('./routes/settingRoutes');
+const superAdminRoutes = require('./routes/superAdminRoutes');
 
 const app = express();
 
@@ -31,6 +32,8 @@ app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/documents', require('./routes/documentRoutes'));
 app.use('/api/pcp-reports', require('./routes/pcpReportRoutes'));
 app.use('/api/settings', settingRoutes);
+app.use('/api/superadmin', superAdminRoutes);
+app.use('/api/plans', require('./routes/planRoutes'));
 
 // Basic route
 app.get('/', (req, res) => {
