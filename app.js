@@ -34,6 +34,7 @@ app.use('/api/workshops', workshopRoutes);
 app.use('/api/attendance', require('./routes/attendanceRoutes'));
 app.use('/api/documents', require('./routes/documentRoutes'));
 app.use('/api/pcp-reports', require('./routes/pcpReportRoutes'));
+app.use('/api/progress-notes', require('./routes/progressNoteRoutes'));
 app.use('/api/settings', settingRoutes);
 app.use('/api/superadmin', superAdminRoutes);
 app.use('/api/plans', require('./routes/planRoutes'));
