@@ -41,6 +41,13 @@ const login = async (req, res) => {
                     message: 'Your organization registration is currently pending approval. Please check back later.'
                 });
             }
+
+            if (org.paymentStatus === 'Pending') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your payment is pending. Please complete the payment process to access your account.'
+                });
+            }
             if (org.status === 'Suspended') {
                 return res.status(403).json({
                     success: false,

@@ -12,11 +12,14 @@ const superAdminRoutes = require('./routes/superAdminRoutes');
 
 const app = express();
 
+// Enable CORS - MUST be before routes
+app.use(cors());
+
+// Stripe Webhook route must be BEFORE express.json()
+app.use('/api/stripe', require('./routes/stripeRoutes'));
+
 // Body parser
 app.use(express.json());
-
-// Enable CORS
-app.use(cors());
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

@@ -36,12 +36,7 @@ const organizationSchema = new mongoose.Schema(
         },
         paymentStatus: {
             type: String,
-            enum: ['Paid', 'Pending', 'Partly'],
-            default: 'Pending',
-        },
-        paymentStatus: {
-            type: String,
-            enum: ['Paid', 'Pending', 'Partly'],
+            enum: ['Paid', 'Pending'],
             default: 'Pending',
         },
         status: {
@@ -59,6 +54,12 @@ const organizationSchema = new mongoose.Schema(
         logo: {
             type: String,
             default: '',
+        },
+        stripeCustomerId: {
+            type: String,
+        },
+        stripeSubscriptionId: {
+            type: String,
         },
     },
     {

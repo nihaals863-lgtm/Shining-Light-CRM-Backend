@@ -7,6 +7,11 @@ const subscriptionPlanSchema = new mongoose.Schema(
             required: [true, 'Please add a plan name'],
             unique: true,
         },
+        planCode: {
+            type: String,
+            required: [true, 'Please add a plan code'],
+            unique: true,
+        },
         price: {
             type: Number,
             required: [true, 'Please add a price'],
@@ -31,6 +36,10 @@ const subscriptionPlanSchema = new mongoose.Schema(
         features: {
             type: [String],
             default: [],
+        },
+        stripePriceId: {
+            type: String,
+            default: '',
         },
     },
     {
