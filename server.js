@@ -8,6 +8,19 @@ dotenv.config();
 connectDB();
 
 const app = require('./app');
+const Workshop = require('./models/Workshop');
+const Student = require('./models/Student');
+
+const sync = async () => {
+    try {
+        await Workshop.syncIndexes();
+        await Student.syncIndexes();
+        console.log('MongoDB Indexes Synced');
+    } catch (err) {
+        console.error('Index Sync Error:', err);
+    }
+};
+sync();
 
 const PORT = process.env.PORT || 5000;
 

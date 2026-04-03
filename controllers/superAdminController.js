@@ -3,7 +3,6 @@ const User = require('../models/User');
 const SubscriptionPlan = require('../models/SubscriptionPlan');
 const Subscription = require('../models/Subscription');
 const Student = require('../models/Student');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 // @desc    Get system overview statistics
 // @route   GET /api/superadmin/dashboard/stats
@@ -230,7 +229,6 @@ exports.getOrganizations = async (req, res) => {
 exports.createPlan = async (req, res) => {
     const { 
         planName, 
-        planCode,
         price, 
         maxStudents, 
         features, 
@@ -240,41 +238,17 @@ exports.createPlan = async (req, res) => {
     } = req.body;
 
     try {
-        let stripePriceId = '';
-
-        // Automate Stripe Price Generation for paid plans
-        if (price > 0) {
-            const product = await stripe.products.create({
-                name: planName,
-                description: `${planName} - ${maxStudents} Students, ${maxStaff} Staff`,
-            });
-
-            const stripePrice = await stripe.prices.create({
-                product: product.id,
-                unit_amount: price * 100, // Stripe expects amount in cents
-                currency: 'usd',
-                recurring: {
-                    interval: billingPeriod.toLowerCase() === 'yearly' ? 'year' : 'month',
-                },
-            });
-
-            stripePriceId = stripePrice.id;
-        }
-
         const plan = await SubscriptionPlan.create({
             planName,
-            planCode: planCode || planName.toUpperCase().replace(/\s+/g, '_'),
             price,
             maxStudents,
             features,
             billingPeriod,
             maxStaff,
-            isPopular,
-            stripePriceId
+            isPopular
         });
         res.status(201).json({ success: true, data: plan });
     } catch (error) {
-        console.error('Stripe/DB Error:', error);
         res.status(400).json({ success: false, message: error.message });
     }
 };
@@ -290,51 +264,15 @@ exports.getPlans = async (req, res) => {
 
 exports.updatePlan = async (req, res) => {
     try {
-        const oldPlan = await SubscriptionPlan.findById(req.params.id);
-        if (!oldPlan) {
-            return res.status(404).json({ success: false, message: 'Plan not found' });
-        }
-
-        const { planName, price, billingPeriod, planCode } = req.body;
-        let stripePriceId = oldPlan.stripePriceId;
-
-        // If it's a paid plan, we create/update Stripe price to ensure it exists in current Stripe account
-        if ((price !== undefined ? price : oldPlan.price) > 0) {
-            try {
-                const product = await stripe.products.create({
-                    name: planName || oldPlan.planName,
-                    description: `Plan: ${planName || oldPlan.planName} (${planCode || oldPlan.planCode})`,
-                });
-
-                const stripePrice = await stripe.prices.create({
-                    product: product.id,
-                    unit_amount: Math.round((price !== undefined ? price : oldPlan.price) * 100),
-                    currency: 'usd',
-                    recurring: {
-                        interval: (billingPeriod || oldPlan.billingPeriod).toLowerCase() === 'yearly' ? 'year' : 'month',
-                    },
-                });
-
-                stripePriceId = stripePrice.id;
-            } catch (stripeErr) {
-                console.error('Stripe sync error during plan update:', stripeErr);
-                // Continue with old ID if creation fails, or handle as error
-            }
-        } else {
-            stripePriceId = '';
-        }
-
-        const updateData = { ...req.body, stripePriceId };
-        delete updateData.planCode; // Ensure planCode doesn't change after creation
-
-        const plan = await SubscriptionPlan.findByIdAndUpdate(req.params.id, updateData, {
+        const plan = await SubscriptionPlan.findByIdAndUpdate(req.params.id, req.body, {
             new: true,
             runValidators: true
         });
-        
+        if (!plan) {
+            return res.status(404).json({ success: false, message: 'Plan not found' });
+        }
         res.status(200).json({ success: true, data: plan });
     } catch (error) {
-        console.error('Update Plan Error:', error);
         res.status(400).json({ success: false, message: error.message });
     }
 };

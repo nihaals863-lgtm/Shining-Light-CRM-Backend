@@ -141,19 +141,7 @@ const deleteWorkshop = async (req, res) => {
         });
         if (!workshop) return res.status(404).json({ success: false, message: 'Workshop not found' });
 
-        // Rule: prevent deletion if attendance exists within organization
-        const attendanceExists = await Attendance.findOne({ 
-            workshopId: workshop.name,
-            organizationId: req.user.organizationId
-        });
-
-        if (attendanceExists) {
-            return res.status(400).json({
-                success: false,
-                message: 'Workshop cannot be deleted because attendance records exist.'
-            });
-        }
-
+        // No restricted deletion - client wants full control to delete any workshop even with attendance
         await workshop.deleteOne();
 
         res.status(200).json({ success: true, data: {} });

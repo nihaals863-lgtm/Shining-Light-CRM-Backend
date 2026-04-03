@@ -31,7 +31,8 @@ const getStudents = async (req, res) => {
             assignedStaff: student.assignedStaff ? {
                 _id: student.assignedStaff._id,
                 name: student.assignedStaff.name
-            } : null
+            } : null,
+            startDate: student.startDate
         }));
 
         res.status(200).json(formattedStudents);
@@ -45,7 +46,7 @@ const getStudents = async (req, res) => {
 // @route   POST /api/students
 // @access  Private/Admin
 const createStudent = async (req, res) => {
-    const { name, phone, email, assignedStaff, status, points } = req.body;
+    const { name, phone, email, assignedStaff, status, points, startDate } = req.body;
 
     if (!name || !phone || !email || !assignedStaff) {
         return res.status(400).json({ success: false, message: 'Please provide all required fields' });
@@ -85,8 +86,9 @@ const createStudent = async (req, res) => {
             email,
             assignedStaff,
             organizationId: req.user.organizationId,
-            ...(points !== undefined && { points }),
+            points: 0, // Points are now automated via attendance only
             ...(status && { status }),
+            ...(startDate && { startDate })
         });
 
         res.status(201).json({
@@ -153,6 +155,7 @@ const getStudentById = async (req, res) => {
                 name: student.assignedStaff.name
             } : null,
             progress: `${student.points} / 250`,
+            startDate: student.startDate || student.createdAt,
             notes: student.notes,
             attendance: student.attendance,
             documents: allDocuments
@@ -178,12 +181,14 @@ const updateStudent = async (req, res) => {
         }
 
         // Authorization Check: Staff can only update their assigned students
-        if (req.user.role !== 'admin' && student.assignedStaff.toString() !== req.user._id.toString()) {
+        if (req.user.role !== 'admin' && student.assignedStaff && student.assignedStaff.toString() !== req.user._id.toString()) {
             return res.status(403).json({ success: false, message: 'Not authorized to update this student' });
+        } else if (req.user.role !== 'admin' && !student.assignedStaff) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update unassigned students' });
         }
 
-        // Only update allowed fields
-        const { name, phone, email, assignedStaff, points, status } = req.body;
+        // Only update allowed fields - removed 'points' to prevent manual override
+        const { name, phone, email, assignedStaff, status, startDate } = req.body;
 
         if (name) student.name = name;
         if (phone) student.phone = phone;
@@ -194,8 +199,8 @@ const updateStudent = async (req, res) => {
             student.assignedStaff = assignedStaff;
         }
 
-        if (points !== undefined) student.points = points;
         if (status) student.status = status; // Allow manual override (e.g., Dropped)
+        if (startDate) student.startDate = startDate;
 
         await student.save(); // using save to trigger pre-save hook for status updates
 
@@ -206,8 +211,8 @@ const updateStudent = async (req, res) => {
             data: updatedStudent
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ success: false, message: 'Server Error' });
+        console.error('UPDATE_STUDENT_ERROR:', error);
+        res.status(500).json({ success: false, message: error.message || 'Server Error' });
     }
 };
 

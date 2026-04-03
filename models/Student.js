@@ -4,7 +4,6 @@ const studentSchema = new mongoose.Schema(
     {
         studentId: {
             type: String,
-            unique: true,
             required: true,
         },
         name: {
@@ -18,11 +17,15 @@ const studentSchema = new mongoose.Schema(
         email: {
             type: String,
             required: [true, 'Please add an email'],
-            unique: true,
             match: [
                 /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
                 'Please add a valid email',
             ],
+        },
+        startDate: {
+            type: Date,
+            required: [true, 'Please add a start date'],
+            default: Date.now,
         },
         points: {
             type: Number,
@@ -92,8 +95,8 @@ const studentSchema = new mongoose.Schema(
 // Pre-save hook to generate Student ID
 studentSchema.pre('validate', async function () {
     if (this.isNew && !this.studentId) {
-        // Find highest existing Student ID
-        const lastStudent = await this.constructor.findOne({}, {}, { sort: { 'createdAt': -1 } });
+        // Find highest existing Student ID within the organization
+        const lastStudent = await this.constructor.findOne({ organizationId: this.organizationId }, {}, { sort: { 'createdAt': -1 } });
 
         let newIdValue = 1; // Starting ID
         if (lastStudent && lastStudent.studentId) {
@@ -107,15 +110,36 @@ studentSchema.pre('validate', async function () {
     }
 });
 
-// Pre-save hook to update status based on points (skipped if manually set to 'Dropped')
-studentSchema.pre('save', function () {
-    if (this.status !== 'Dropped') {
-        if (this.points >= 250) {
-            this.status = 'Completed';
-        } else if (this.status !== 'Secondary Completion') {
+// Pre-save hook to update status based on points
+studentSchema.pre('save', async function () {
+    try {
+        const threshold = this.totalPoints || 250;
+
+        // 1. If status is being manually changed to any completion or dropped status, respect it
+        if (this.isModified('status')) {
+            if (['Completed', 'Secondary Completion', 'Dropped'].includes(this.status)) {
+                return;
+            }
+        }
+
+        // 2. Auto-complete if points threshold is reached (upgrades to Primary Completion)
+        if (this.points >= threshold) {
+            if (this.status !== 'Dropped') {
+                this.status = 'Completed';
+            }
+        } 
+        // 3. Otherwise, if points are below threshold, respect manual overrides
+        else if (this.status !== 'Completed' && this.status !== 'Secondary Completion' && this.status !== 'Dropped') {
             this.status = 'Active';
         }
+    } catch (err) {
+        console.error('STUDENT_PRE_SAVE_ERR:', err);
+        throw err;
     }
 });
+
+// Compound indices to ensure uniqueness within a single organization
+studentSchema.index({ studentId: 1, organizationId: 1 }, { unique: true });
+studentSchema.index({ email: 1, organizationId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Student', studentSchema);

@@ -68,15 +68,14 @@ const getDashboardStats = async (req, res) => {
 
         // Calculate rates
         const attendanceRate = maxPossiblePoints > 0 ? ((totalPointsEarned / maxPossiblePoints) * 100).toFixed(1) : 0;
-        const completionRate = totalStudents > 0 ? ((completedStudents / totalStudents) * 100).toFixed(1) : 0;
+        const completionRate = totalStudents > 0 ? (((completedStudents + secondaryCompletionStudents) / totalStudents) * 100).toFixed(1) : 0;
 
         // Completion Chart Data
         const completionData = [
-            { name: 'Completed', value: completedStudents },
             { name: 'Active', value: activeStudents },
-            { name: 'Dropped', value: droppedStudents },
-            { name: 'Secondary', value: secondaryCompletionStudents }
-        ].filter(item => item.value > 0); // Remove empty slices
+            { name: 'Inactive', value: droppedStudents },
+            { name: 'Completed', value: completedStudents + secondaryCompletionStudents }
+        ];
 
         // Progress Chart Data (Enrollment over last 6 months)
         const progressDataMap = {};
@@ -110,7 +109,7 @@ const getDashboardStats = async (req, res) => {
             data: {
                 totalStudents,
                 activeStudents,
-                completedStudents,
+                completedStudents: completedStudents + secondaryCompletionStudents,
                 totalWorkshops,
                 attendanceRate,
                 completionRate,

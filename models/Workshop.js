@@ -5,7 +5,6 @@ const workshopSchema = new mongoose.Schema(
         name: {
             type: String,
             required: [true, 'Please add a workshop name'],
-            unique: true,
         },
         description: {
             type: String,
@@ -29,5 +28,8 @@ const workshopSchema = new mongoose.Schema(
         timestamps: true,
     }
 );
+
+// Compound index to ensure workshop names are unique within a single organization
+workshopSchema.index({ name: 1, organizationId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Workshop', workshopSchema);
